@@ -1,0 +1,53 @@
+{
+  "name": "papel-e-tinta",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "typecheck": "tsc -b",
+    "test:db": "bash scripts/test-db.sh",
+    "test:e2e": "playwright test",
+    "check:edge": "DENO_DIR=.cache/deno deno check supabase/functions/evaluate-student-essay/index.ts supabase/functions/ocr-extract/index.ts",
+    "test:edge": "DENO_DIR=.cache/deno deno test --allow-env=OPENAI_API_KEY,OPENAI_MODEL,WEB_ORIGIN supabase/functions/_shared/*.test.ts",
+    "format": "prettier --write src supabase/functions tests/e2e *.ts *.json",
+    "dev:demo": "node scripts/dev-demo.mjs"
+  },
+  "dependencies": {
+    "@fontsource/lora": "^5.2.5",
+    "@fontsource/montserrat": "^5.2.5",
+    "@radix-ui/react-dialog": "^1.1.6",
+    "@radix-ui/react-slot": "^1.5.0",
+    "@radix-ui/react-tabs": "^1.1.3",
+    "@supabase/supabase-js": "^2.49.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "jspdf": "^3.0.1",
+    "lucide-react": "^0.468.0",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.6.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.51.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "deno": "^2.2.3",
+    "postcss": "^8.5.3",
+    "prettier": "^3.9.10",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.7"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

@@ -1,0 +1,6 @@
+project_id = "papel-e-tinta"
+[functions.evaluate-student-essay]
+verify_jwt = false
+[functions.ocr-extract]
+verify_jwt = false
+# Ambas as funções validam o JWT com auth.getUser antes de qualquer operação.
