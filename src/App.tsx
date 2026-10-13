@@ -193,7 +193,7 @@ export default function App() {
   const [themeId, setThemeId] = useState<string | null>(null);
   const notify = useCallback((message: string, error = false) => setToast({ message, error }), []);
   useEffect(() => {
-    if (!toast) return;
+    if (!toast || toast.error) return;
     const timer = setTimeout(() => setToast(null), 6000);
     return () => clearTimeout(timer);
   }, [toast]);

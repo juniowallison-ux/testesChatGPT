@@ -12,10 +12,17 @@ export default defineConfig({
     },
     viewport: { width: 1440, height: 1000 },
   },
-  webServer: {
-    command: 'npm run dev:demo',
-    url: 'http://127.0.0.1:5174',
-    reuseExistingServer: false,
-  },
+  webServer: [
+    {
+      command: 'npm run dev:demo',
+      url: 'http://127.0.0.1:5174',
+      reuseExistingServer: false,
+    },
+    {
+      command: 'node scripts/dev-mock.mjs',
+      url: 'http://127.0.0.1:5175',
+      reuseExistingServer: false,
+    },
+  ],
   reporter: 'list',
 });

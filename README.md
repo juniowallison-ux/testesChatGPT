@@ -88,7 +88,7 @@ O texto original do OCR e o texto revisado são guardados separadamente. O banco
 ## Validação e manutenção
 
 ```bash
-npm test                # 20 testes: regras compartilhadas e mensagens de falha
+npm test                # 26 testes: regras, mensagens de falha e chamada de avaliação
 npm run typecheck       # TypeScript do frontend
 npm run build           # Build de produção
 npm run check:edge      # TypeScript das duas Edge Functions (Deno)
@@ -137,3 +137,11 @@ Também é possível importar essa branch no Netlify. `netlify.toml` configura o
 Antes de corrigir, cadastre o tema real da proposta em **Temas de redação → Novo tema**, preencha título e textos motivadores e salve. Em **Correção direta**, selecione esse tema, cole a redação e clique em **Salvar para corrigir → Confirmar envio**. Na devolutiva, clique em **Avaliar com IA**. Quando não houver temas, a interface mostra o requisito e um atalho para cadastrar o primeiro, preservando o rascunho no mesmo navegador. O cenário foi validado no teste E2E de projeto sem temas.
 
 Para atualizar um site publicado manualmente, baixe novamente o ZIP da branch `codex/papel-e-tinta`, extraia e envie a pasta `site` pela área de upload de deploy manual em **Netlify → seu site → Deploys**. Isso mantém o endereço do site existente.
+
+## Redação continua aguardando correção
+
+“Salvar para corrigir” registra a redação; a avaliação só começa quando se clica em **Avaliar com IA**. Durante a chamada, a tela mostra **Avaliando…**. Erros permanecem visíveis e mostram o motivo informado pela função e o código HTTP. A espera no navegador termina em 115 segundos; isso não cancela uma operação já iniciada no servidor.
+
+Use **Atualizar resultado** para consultar a correção salva sem repetir uma chamada à IA. Se ainda não houver avaliação, confira o erro antes de tentar novamente. Falhas de crédito/faturamento da OpenAI, sessão, configuração da função e conexão exigem ações diferentes. Os registros `booted` e `shutdown` do Supabase, isoladamente, não identificam a causa: confira o POST na aba **Invocations**, incluindo o código HTTP, e a mensagem mostrada no site.
+
+Os testes de navegador incluem falha HTTP 429 com aviso persistente, espera sem cliques repetidos, recuperação de resultado já salvo e nova tentativa bem-sucedida. Esses cenários usam um Supabase fictício interceptado pelo Playwright, sem chamadas à OpenAI ou ao projeto real. A correção autenticada no projeto do usuário ainda depende de diagnóstico e validação.

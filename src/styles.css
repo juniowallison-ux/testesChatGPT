@@ -2169,6 +2169,13 @@ tbody tr:hover {
   text-align: center;
   color: #9cad87;
 }
+.evaluation-error {
+  margin-bottom: 24px;
+  align-items: flex-start;
+}
+.evaluation-error p {
+  margin: 8px 0 12px;
+}
 .pending-evaluation > svg {
   display: inline-block;
   margin-bottom: 15px;
@@ -2891,6 +2898,15 @@ tbody tr:hover {
   }
 }
 
-.editor-theme-notice { margin: 0 22px 20px; }
-.editor-theme-notice strong { display: block; margin-bottom: 5px; font-size: 12px; }
-.editor-theme-notice p { margin-bottom: 12px; font-size: 11px; }
+.editor-theme-notice {
+  margin: 0 22px 20px;
+}
+.editor-theme-notice strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12px;
+}
+.editor-theme-notice p {
+  margin-bottom: 12px;
+  font-size: 11px;
+}

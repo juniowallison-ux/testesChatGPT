@@ -99,18 +99,38 @@ export async function evaluateEssay(submissionId: string, feedback?: string): Pr
     throw new Error(
       'A IA real exige uma conexão Supabase. No modo de demonstração, use a correção manual.',
     );
+  const signal = AbortSignal.timeout(115000);
   const { data, error } = await supabase.functions.invoke('evaluate-student-essay', {
     body: { submission_id: submissionId, refinement: feedback || undefined },
+    signal,
   });
   if (error) {
+    if (signal.aborted)
+      throw new Error(
+        'A avaliação demorou mais que o esperado. A redação está salva. Clique em “Atualizar resultado” para verificar se a correção foi concluída antes de tentar novamente.',
+      );
     let message =
       'Não foi possível obter a avaliação. Tente novamente ou peça uma correção manual.';
+    const status = error.context?.status;
     try {
-      message = (await error.context.json()).error || message;
+      const payload = await error.context.json();
+      const detail = payload?.error || payload?.message;
+      if (typeof detail === 'string' && detail.trim()) message = detail;
     } catch {}
+    if (error.name === 'FunctionsFetchError')
+      message =
+        'Não foi possível conectar à função de correção. Verifique a conexão e se evaluate-student-essay está publicada no Supabase.';
+    if (typeof status === 'number') message += ` (HTTP ${status})`;
     throw new Error(message);
   }
-  if (data?.error) throw new Error(data.error);
+  if (typeof data?.error === 'string') throw new Error(data.error);
+  if (
+    !data?.evaluation ||
+    ![1, 2, 3, 4, 5].every((n) => Number.isFinite(data.evaluation[`c${n}_score`]))
+  )
+    throw new Error(
+      'A função de correção respondeu sem uma avaliação completa. Verifique se evaluate-student-essay está publicada com o código atualizado.',
+    );
 }
 export async function uploadFile(file: File, userId: string): Promise<string> {
   if (!supabase) throw new Error('Uploads reais precisam da conexão Supabase.');

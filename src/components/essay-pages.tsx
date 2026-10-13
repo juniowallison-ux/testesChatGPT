@@ -476,6 +476,14 @@ export function EvaluationPage({ submissionId }: { submissionId: string }) {
   const [refinement, setRefinement] = useState('');
   const [chat, setChat] = useState<string[]>([]);
   const [exportOpen, setExportOpen] = useState(false);
+  const [evaluationError, setEvaluationError] = useState('');
+  const [evaluating, setEvaluating] = useState(false);
+  useEffect(() => {
+    setEvaluationError('');
+  }, [submissionId]);
+  useEffect(() => {
+    if (evaluation) setEvaluationError('');
+  }, [evaluation]);
   if (!s)
     return (
       <Empty
@@ -487,12 +495,27 @@ export function EvaluationPage({ submissionId }: { submissionId: string }) {
   const student = data.profiles.find((p) => p.id === s.student_id);
   const lines = wrapEssay(s.reviewed_text);
   async function evaluate(instruction?: string) {
-    await evaluateEssay(submissionId, instruction);
-    await refresh();
-    notify('Devolutiva concluída.');
-    if (instruction) {
-      setChat((prev) => [...prev, instruction]);
-      setRefinement('');
+    setEvaluationError('');
+    setEvaluating(true);
+    try {
+      await evaluateEssay(submissionId, instruction);
+      try {
+        await refresh();
+      } catch {
+        throw new Error(
+          'A avaliação foi concluída, mas não foi possível carregar a devolutiva. Clique em “Atualizar resultado” para consultar a correção salva.',
+        );
+      }
+      notify('Devolutiva concluída.');
+      if (instruction) {
+        setChat((prev) => [...prev, instruction]);
+        setRefinement('');
+      }
+    } catch (error) {
+      setEvaluationError(errorMessage(error, 'Não foi possível concluir a avaliação.'));
+      throw error;
+    } finally {
+      setEvaluating(false);
     }
   }
   function updateDraft(key: keyof Evaluation, value: unknown) {
@@ -560,6 +583,32 @@ export function EvaluationPage({ submissionId }: { submissionId: string }) {
         <span>{new Date(s.created_at).toLocaleDateString('pt-BR')}</span>
         <StatusBadge status={s.status} />
       </div>
+      {evaluationError && (
+        <div className="notice notice-amber evaluation-error" role="alert">
+          <AlertTriangle size={20} />
+          <div>
+            <strong>Não foi possível mostrar a correção</strong>
+            <p>{evaluationError}</p>
+            <p>
+              A redação continua salva. Atualizar o resultado consulta os dados sem iniciar outra
+              chamada à IA.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await refresh();
+                  notify('Resultado consultado.');
+                })
+              }
+            >
+              Atualizar resultado
+            </Button>
+          </div>
+        </div>
+      )}
       {evaluation?.source === 'example' && (
         <div className="notice">
           <Eye size={18} />
@@ -586,22 +635,31 @@ export function EvaluationPage({ submissionId }: { submissionId: string }) {
       {!evaluation ? (
         <section className="panel pending-evaluation">
           <Sparkles size={29} />
-          <h2>Seu texto está pronto para um olhar atento.</h2>
-          <p>
-            {demo
-              ? 'A demonstração não chama a IA. Entre como professora para criar uma correção manual.'
-              : 'Inicie a avaliação para receber a devolutiva detalhada por competência.'}
+          <h2>
+            {evaluating ? 'Avaliando sua redação…' : 'Seu texto está pronto para um olhar atento.'}
+          </h2>
+          <p role={evaluating ? 'status' : undefined}>
+            {evaluating
+              ? 'Aguarde a resposta da IA. A nota aparecerá aqui quando a correção for concluída.'
+              : demo
+                ? 'A demonstração não chama a IA. Entre como professora para criar uma correção manual.'
+                : 'Inicie a avaliação para receber a devolutiva detalhada por competência.'}
           </p>
           <div className="form-actions">
             {!demo && (
               <Button disabled={busy} onClick={() => void run(() => evaluate())}>
-                {busy ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}Avaliar
-                com IA
+                {evaluating ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}
+                {evaluating
+                  ? 'Avaliando…'
+                  : evaluationError
+                    ? 'Tentar avaliar novamente'
+                    : 'Avaliar com IA'}
               </Button>
             )}
             {teacher && (
               <Button
                 variant="outline"
+                disabled={busy}
                 onClick={() => {
                   setDraft(emptyEvaluation(s));
                   setEdit(true);
