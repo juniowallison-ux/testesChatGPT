@@ -88,7 +88,7 @@ O texto original do OCR e o texto revisado são guardados separadamente. O banco
 ## Validação e manutenção
 
 ```bash
-npm test                # 17 testes das regras compartilhadas
+npm test                # 20 testes: regras compartilhadas e mensagens de falha
 npm run typecheck       # TypeScript do frontend
 npm run build           # Build de produção
 npm run check:edge      # TypeScript das duas Edge Functions (Deno)
@@ -131,3 +131,9 @@ Para publicar pelo Netlify, extraia o ZIP, entre em https://app.netlify.com/drop
 A branch `codex/papel-e-tinta` inclui o código completo e a pasta `site/`, com o build estático preparado para publicação manual. No GitHub, selecione essa branch e use **Code → Download ZIP**. Extraia o arquivo e envie somente a pasta `site` ao Netlify Drop.
 
 Também é possível importar essa branch no Netlify. `netlify.toml` configura o build e a conexão pública do Supabase; a chave publishable é destinada ao navegador. A chave privada da OpenAI permanece exclusivamente nos segredos do Supabase e não é incluída no repositório ou no site. Se modificar o código, execute `npm run build` para gerar um novo `dist`; a pasta `site` é uma cópia do build atual.
+
+## Botão de correção desativado
+
+Antes de corrigir, cadastre o tema real da proposta em **Temas de redação → Novo tema**, preencha título e textos motivadores e salve. Em **Correção direta**, selecione esse tema, cole a redação e clique em **Salvar para corrigir → Confirmar envio**. Na devolutiva, clique em **Avaliar com IA**. Quando não houver temas, a interface mostra o requisito e um atalho para cadastrar o primeiro, preservando o rascunho no mesmo navegador. O cenário foi validado no teste E2E de projeto sem temas.
+
+Para atualizar um site publicado manualmente, baixe novamente o ZIP da branch `codex/papel-e-tinta`, extraia e envie a pasta `site` pela área de upload de deploy manual em **Netlify → seu site → Deploys**. Isso mantém o endereço do site existente.

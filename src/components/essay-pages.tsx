@@ -21,6 +21,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { Button, Modal, Tabs } from './ui';
+import { errorMessage } from '../lib/errors';
 import { useApp } from '../lib/context';
 import { PageHeading, Empty, EssayTable, StatusBadge } from './dashboard';
 import { wrapEssay, suspiciousLines, snapScore } from '../lib/essay';
@@ -136,6 +137,19 @@ export function EssayEditor({
   const alreadySent =
     !direct &&
     data.submissions.some((s) => s.student_id === profile.id && s.theme_id === selectedTheme);
+  const sendBlockReason = busy
+    ? 'Aguarde a operação em andamento.'
+    : !theme
+      ? data.themes.length === 0
+        ? 'Cadastre um tema antes de salvar a redação.'
+        : 'Selecione o tema da redação no campo acima.'
+      : !text.trim()
+        ? 'Digite ou cole a redação para continuar.'
+        : alreadySent
+          ? 'Você já enviou uma redação para este tema.'
+          : extracted && !reviewed
+            ? 'Confirme a revisão do texto extraído antes de enviar.'
+            : '';
   async function submit() {
     if (alreadySent) throw new Error('Você já enviou uma redação para este tema.');
     if (extracted && !reviewed) throw new Error('Revise o texto extraído antes de enviar.');
@@ -170,12 +184,7 @@ export function EssayEditor({
         await refresh();
         notify('Redação avaliada. Sua devolutiva está disponível.');
       } catch (error) {
-        notify(
-          error instanceof Error
-            ? error.message
-            : 'Avaliação pendente. Você pode tentar novamente.',
-          true,
-        );
+        notify(errorMessage(error, 'Avaliação pendente. Você pode tentar novamente.'), true);
       }
     }
   }
@@ -219,6 +228,7 @@ export function EssayEditor({
                 value={selectedTheme}
                 onChange={(e) => setSelectedTheme(e.target.value)}
                 disabled={!direct}
+                aria-describedby={!theme ? 'essay-theme-help' : undefined}
               >
                 <option value="">Escolha um tema</option>
                 {data.themes
@@ -231,6 +241,28 @@ export function EssayEditor({
               </select>
             </label>
           </div>
+          {!theme && (
+            <div className="notice editor-theme-notice" id="essay-theme-help" role="status">
+              <AlertTriangle size={20} />
+              <div>
+                <strong>
+                  {data.themes.length === 0
+                    ? 'Cadastre o tema da proposta'
+                    : 'Escolha o tema da proposta'}
+                </strong>
+                <p>
+                  {data.themes.length === 0
+                    ? 'A correção precisa do tema para avaliar se a redação atende à proposta. Seu rascunho fica salvo neste navegador.'
+                    : 'Selecione o tema no campo acima para liberar o envio da redação.'}
+                </p>
+                {profile.role === 'teacher' && data.themes.length === 0 && (
+                  <Button variant="outline" size="sm" onClick={() => navigate('themes')}>
+                    Cadastrar primeiro tema <BookOpen size={15} />
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
           <Tabs
             value={tab}
             onChange={setTab}
@@ -329,15 +361,15 @@ export function EssayEditor({
             </div>
           )}
           <div className="editor-bottom">
-            <p>
-              {alreadySent
-                ? 'Você já enviou uma redação para este tema.'
-                : direct
-                  ? 'Salve quantos textos precisar para corrigir.'
-                  : 'Confira seu texto antes de enviar. O envio por tema é único.'}
+            <p id="essay-send-help" role={sendBlockReason ? 'status' : undefined}>
+              {sendBlockReason ||
+                (direct
+                  ? 'Salve o texto e, na próxima tela, escolha avaliar com IA ou corrigir manualmente.'
+                  : 'Confira seu texto antes de enviar. O envio por tema é único.')}
             </p>
             <Button
-              disabled={busy || !text.trim() || !theme || alreadySent || (extracted && !reviewed)}
+              disabled={Boolean(sendBlockReason)}
+              aria-describedby="essay-send-help"
               onClick={() => setConfirm(true)}
             >
               {direct ? 'Salvar para corrigir' : 'Enviar redação'}

@@ -2890,3 +2890,7 @@ tbody tr:hover {
     transition: none !important;
   }
 }
+
+.editor-theme-notice { margin: 0 22px 20px; }
+.editor-theme-notice strong { display: block; margin-bottom: 5px; font-size: 12px; }
+.editor-theme-notice p { margin-bottom: 12px; font-size: 11px; }

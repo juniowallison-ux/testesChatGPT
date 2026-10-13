@@ -127,13 +127,11 @@ test('documento de apoio, edição de aluno e rascunho da correção direta func
   await page.getByRole('button', { name: 'Documentos de apoio', exact: true }).click();
   await page.getByRole('button', { name: 'Adicionar documento' }).click();
   await page.getByLabel('Título privado').fill('Material pedagógico de teste');
-  await page
-    .locator('input[type=file]')
-    .setInputFiles({
-      name: 'apoio.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('Oriente o aluno a explicar causas e consequências.'),
-    });
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'apoio.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('Oriente o aluno a explicar causas e consequências.'),
+  });
   await expect(page.getByLabel('Conteúdo para a IA')).toHaveValue(
     'Oriente o aluno a explicar causas e consequências.',
   );
@@ -166,4 +164,40 @@ test('documento de apoio, edição de aluno e rascunho da correção direta func
     0,
   );
   await expect(page.getByRole('button', { name: 'Orientações da IA', exact: true })).toHaveCount(0);
+});
+
+test('projeto sem temas explica o bloqueio e permite cadastrar tema sem perder o rascunho', async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    // Simula um projeto recém-configurado, usando somente dados locais da demonstração.
+    const { initialData } = await import('/src/lib/demo.ts');
+    const data = initialData();
+    data.themes = [];
+    data.submissions = [];
+    data.evaluations = [];
+    localStorage.setItem('papel-e-tinta-demo-v1', JSON.stringify(data));
+  });
+  await page.reload();
+  await page.getByRole('button', { name: 'Correção direta', exact: true }).click();
+  const essay =
+    'A democratização da educação exige investimento público. Portanto, o Ministério da Educação deve ampliar a formação docente por meio de programas continuados, para melhorar a aprendizagem.';
+  await page.getByLabel('Texto da redação').fill(essay);
+  await expect(page.getByRole('button', { name: 'Salvar para corrigir' })).toBeDisabled();
+  await expect(page.getByText('Cadastre um tema antes de salvar a redação.')).toBeVisible();
+  await page.getByRole('button', { name: 'Cadastrar primeiro tema' }).click();
+  await page.getByRole('button', { name: 'Novo tema' }).click();
+  await page.getByLabel('Título', { exact: true }).fill('Democratização da educação');
+  await page
+    .getByLabel('Textos motivadores')
+    .fill('Discuta o direito à educação e os desafios de sua efetivação.');
+  await page.getByRole('button', { name: 'Salvar tema' }).click();
+  await page.getByRole('button', { name: 'Correção direta', exact: true }).click();
+  await expect(page.getByLabel('Texto da redação')).toHaveValue(essay);
+  await expect(page.getByRole('button', { name: 'Salvar para corrigir' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Salvar para corrigir' }).click();
+  await page.getByRole('button', { name: 'Confirmar envio' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Seu texto está pronto para um olhar atento.' }),
+  ).toBeVisible();
 });

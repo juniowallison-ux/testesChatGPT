@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Button } from './components/ui';
 import { AppContext } from './lib/context';
+import { errorMessage } from './lib/errors';
 import { isDemo, supabase } from './lib/supabase';
 import { ids, loadDemo } from './lib/demo';
 import { fetchData, getProfile, mutate } from './lib/store';
@@ -71,7 +72,7 @@ function Login({ onLogin }: { onLogin: () => Promise<void> }) {
       }
       await onLogin();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Não foi possível entrar.');
+      setError(errorMessage(err, 'Não foi possível entrar.'));
     } finally {
       setLoading(false);
     }
@@ -213,7 +214,7 @@ export default function App() {
       setProfile(p);
       setData(d);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Erro ao carregar o ambiente.');
+      setLoadError(errorMessage(err, 'Erro ao carregar o ambiente.'));
     } finally {
       setLoading(false);
     }
@@ -241,7 +242,7 @@ export default function App() {
     try {
       await operation();
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Não foi possível concluir a operação.', true);
+      notify(errorMessage(err, 'Não foi possível concluir a operação.'), true);
     } finally {
       setBusy(false);
     }
