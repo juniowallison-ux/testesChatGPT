@@ -219,3 +219,34 @@ Deno.test('OpenAI: texto ausente na resposta é rejeitado', async () => {
     },
   );
 });
+Deno.test('OpenAI: falha de conexão é identificada sem expor o erro bruto', async () => {
+  await withMock(
+    async () => {
+      throw new TypeError('Detalhes privados da conexão');
+    },
+    async () => {
+      await expectError(
+        () => openai('Avalie.', [{ text: 'Texto' }], responseSchema),
+        502,
+        'conectar à OpenAI',
+      );
+    },
+  );
+});
+Deno.test('OpenAI: tempo excedido é identificado e a avaliação pode limitar a espera', async () => {
+  await withMock(
+    async (_url, init) => {
+      assert(init?.signal instanceof AbortSignal);
+      const error = new Error('Tempo excedido');
+      error.name = 'TimeoutError';
+      throw error;
+    },
+    async () => {
+      await expectError(
+        () => openai('Avalie.', [{ text: 'Texto' }], responseSchema, { timeoutMs: 45000 }),
+        504,
+        'tempo esperado',
+      );
+    },
+  );
+});

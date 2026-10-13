@@ -1,5 +1,16 @@
 import { z } from 'npm:zod@3.24.2';
-import { snapScore, validEvidence, wrapEssay } from './essay.ts';
+import { literalQuote, snapScore, validEvidence, wrapEssay } from './essay.ts';
+export type ValidationCode =
+  'format' | 'competencies' | 'evidence' | 'intervention' | 'line_reference' | 'privacy';
+export class EvaluationValidationError extends Error {
+  constructor(
+    public code: ValidationCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'EvaluationValidationError';
+  }
+}
 const comment = z.string().min(1).max(6000);
 export const evaluationSchema = z.object({
   competencies: z
@@ -88,31 +99,79 @@ export const responseSchema = {
   ],
 };
 export function normalizeEvaluation(raw: unknown, text: string, privateNames: string[] = []) {
-  const value = evaluationSchema.parse(raw);
+  const parsed = evaluationSchema.safeParse(raw);
+  if (!parsed.success)
+    throw new EvaluationValidationError(
+      'format',
+      'A resposta não contém todos os campos no formato esperado.',
+    );
+  const value = parsed.data;
+  const lines = wrapEssay(text);
   if (new Set(value.competencies.map((c) => c.number)).size !== 5)
-    throw new Error('Competências incompletas.');
-  if (value.evidence.some((e) => !validEvidence(text, e)))
-    throw new Error('Evidência ou linha não encontrada no texto.');
-  for (const quote of Object.values(value.intervention)) {
-    if (quote !== null && (!quote.trim() || !text.includes(quote)))
-      throw new Error('Elemento de intervenção sem evidência literal.');
+    throw new EvaluationValidationError(
+      'competencies',
+      'A resposta repetiu ou omitiu uma competência.',
+    );
+  for (const evidence of value.evidence) {
+    evidence.quote = evidence.quote.trim().replace(/\s+/g, ' ');
+    if (!evidence.quote)
+      throw new EvaluationValidationError('evidence', 'A IA retornou uma citação vazia.');
+    if (!validEvidence(text, evidence)) {
+      const matches = lines.flatMap((line, i) => (line.includes(evidence.quote) ? [i + 1] : []));
+      // Só corrige o número quando o trecho literal identifica uma única linha.
+      if (matches.length !== 1)
+        throw new EvaluationValidationError(
+          'evidence',
+          'A IA citou um trecho que não pôde ser confirmado em uma única linha da redação.',
+        );
+      evidence.line = matches[0];
+    }
+  }
+  for (const key of Object.keys(value.intervention) as (keyof typeof value.intervention)[]) {
+    const quote = value.intervention[key];
+    if (quote !== null) {
+      const original = literalQuote(text, quote);
+      if (original === null)
+        throw new EvaluationValidationError(
+          'intervention',
+          'A IA indicou um elemento da intervenção sem trecho literal na redação.',
+        );
+      value.intervention[key] = original;
+    }
   }
   const serialized = JSON.stringify(value);
-  for (const match of serialized.matchAll(/(?:\bL|linha\s+)(\d+)/gi)) {
-    if (Number(match[1]) < 1 || Number(match[1]) > wrapEssay(text).length)
-      throw new Error('Referência a linha inexistente.');
+  // As citações podem conter números escritos pelo aluno; confira as referências da devolutiva.
+  const comments = [
+    ...value.competencies.map((c) => c.comment),
+    value.general_feedback,
+    ...value.strengths,
+    ...value.improvements,
+    ...value.evidence.map((e) => e.comment),
+    value.zero_reason || '',
+  ];
+  for (const comment of comments) {
+    for (const match of comment.matchAll(/(?:\bL|\blinha\s+)(\d+)\b/gi)) {
+      if (Number(match[1]) < 1 || Number(match[1]) > lines.length)
+        throw new EvaluationValidationError(
+          'line_reference',
+          'A devolutiva menciona uma linha que não existe na redação.',
+        );
+    }
   }
   const privateTerms = privateNames.filter(
     (n) => n.length >= 4 && !text.toLocaleLowerCase().includes(n.toLocaleLowerCase()),
   );
   if (privateTerms.some((n) => serialized.toLocaleLowerCase().includes(n.toLocaleLowerCase())))
-    throw new Error('A resposta menciona contexto privado.');
+    throw new EvaluationValidationError(
+      'privacy',
+      'A devolutiva menciona contexto privado da professora.',
+    );
   if (
     /orientaç(?:ão|ões)\s+(?:interna|da professora)|documentos? de apoio|prompt do sistema|campo_nome/i.test(
-      serialized,
+      comments.join('\n'),
     )
   )
-    throw new Error('A resposta menciona instruções internas.');
+    throw new EvaluationValidationError('privacy', 'A devolutiva menciona instruções internas.');
   // Nenhum prompt/arquivo interno é enviado ao navegador. Apenas este DTO validado é persistido.
   const result: Record<string, unknown> = {
     general_feedback: value.general_feedback,
@@ -136,7 +195,7 @@ C2: 200 tema desenvolvido com argumentação consistente, repertório sociocultu
 C3: 200 informações, fatos e opiniões relacionados ao tema, organizados e consistentes, configurando autoria; 160 organização com indícios de autoria; 120 organização limitada ou pouco desenvolvida, em defesa de um ponto de vista; 80 informações desorganizadas ou contraditórias, limitadas e com defesa frágil; 40 informações pouco relacionadas ou incoerentes, sem defesa consistente; 0 informações não relacionadas e ausência de defesa de ponto de vista.
 C4: 200 boa articulação das partes e repertório diversificado de recursos coesivos; 160 articulação com poucas inadequações e recursos diversificados; 120 articulação mediana com inadequações e pouca diversidade; 80 articulação insuficiente com muitas inadequações e recursos limitados; 40 articulação precária; 0 ausência de articulação.
 C5: 200 proposta muito bem elaborada, detalhada, relacionada ao tema e articulada à discussão; 160 proposta bem elaborada, relacionada e articulada; 120 elaboração mediana, relacionada e articulada; 80 elaboração insuficiente ou não articulada à discussão; 40 proposta vaga, precária ou relacionada apenas ao assunto; 0 ausência de proposta, proposta sem relação com tema/assunto ou desrespeito aos direitos humanos. Os cinco elementos ajudam a justificar o nível, mas devem ter conexão e elaboração, não apenas presença nominal.
-EVIDÊNCIAS: Toda indicação de desvio deve ser apoiada por uma entrada em evidence com quote LITERAL e CONTÍGUA em uma única linha fornecida, line existente e competency. Nunca invente trechos, erros ou números de linha. Não cite trechos na devolutiva fora de evidence. O texto numerado usa régua de 80 caracteres e NÃO representa linhas físicas manuscritas; não use essa contagem para anular textos por número de linhas. Se as informações forem insuficientes, diga isso e peça revisão da professora.
+EVIDÊNCIAS: Toda indicação de desvio deve ser apoiada por uma entrada em evidence com quote LITERAL e CONTÍGUA em uma única linha fornecida, line existente e competency. Copie os caracteres do trecho exatamente, sem corrigir ortografia, pontuação ou acentuação. Use trechos curtos, sem atravessar linhas; line é o número L fornecido, sem recontar. Não acrescente aspas ou reticências ao trecho. Nunca invente trechos, erros ou números de linha. Não cite trechos nem números de linha nos comentários: use os campos quote e line em evidence. O texto numerado usa régua de 80 caracteres e NÃO representa linhas físicas manuscritas; não use essa contagem para anular textos por número de linhas. Se as informações forem insuficientes, diga isso e peça revisão da professora.
 C5: intervention deve conter agente, acao, meio, efeito e detalhamento como trechos literais do texto, ou null quando ausentes. Não atribua elementos implícitos sem evidência. A intervenção deve respeitar os direitos humanos. Uma violação deve ser tratada conforme a matriz vigente, sem inventar regra de anulação.
 ANULAÇÃO: zero_reason é null salvo critério oficial aplicável e demonstrado. Quando houver anulação justificada, todas as notas são zero. Não exija título. A abordagem parcial do tema e desvios de competência não são automaticamente anulação total.
 Retorne o JSON solicitado, com exatamente cinco competências numeradas de 1 a 5, justificativas, evidências, pontos fortes e próximos passos. Nenhum dado técnico privado deve aparecer no JSON.`;

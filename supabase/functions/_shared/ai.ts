@@ -37,31 +37,42 @@ export async function openai(
   system: string,
   parts: Part[],
   schema: Record<string, unknown>,
-  options: { seed?: number; schemaName?: string } = {},
+  options: { seed?: number; schemaName?: string; timeoutMs?: number } = {},
 ): Promise<unknown> {
   const key = Deno.env.get('OPENAI_API_KEY');
   if (!key) throw new HttpError(503, 'Configure OPENAI_API_KEY nos segredos do Supabase.');
   const model = openAIModel();
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-    signal: AbortSignal.timeout(100000),
-    body: JSON.stringify({
-      model,
-      store: false,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: toOpenAIContent(parts) },
-      ],
-      temperature: 0.1,
-      ...(options.seed === undefined ? {} : { seed: options.seed }),
-      max_completion_tokens: 12000,
-      response_format: {
-        type: 'json_schema',
-        json_schema: { name: options.schemaName || 'enem_evaluation', strict: true, schema },
-      },
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(options.timeoutMs ?? 100000),
+      body: JSON.stringify({
+        model,
+        store: false,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: toOpenAIContent(parts) },
+        ],
+        temperature: 0.1,
+        ...(options.seed === undefined ? {} : { seed: options.seed }),
+        max_completion_tokens: 12000,
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name: options.schemaName || 'enem_evaluation', strict: true, schema },
+        },
+      }),
+    });
+  } catch (error) {
+    const timeout = error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name);
+    throw new HttpError(
+      timeout ? 504 : 502,
+      timeout
+        ? 'A OpenAI não respondeu no tempo esperado. Consulte o resultado salvo antes de tentar novamente.'
+        : 'Não foi possível conectar à OpenAI. Tente novamente mais tarde.',
+    );
+  }
   if (!response.ok) {
     const message =
       response.status === 401

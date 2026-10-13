@@ -45,6 +45,13 @@ describe('Validação ENEM e evidências', () => {
     expect(validEvidence('A educação é um direito.', { quote: 'saúde', line: 1 })).toBe(false);
     expect(validEvidence('texto', { quote: '', line: 1 })).toBe(false);
   });
+  it('usa a mesma régua para validar evidências em textos colados com espaços ou tabulação', () => {
+    const text = 'A\teducação   é um direito.';
+    expect(validEvidence(text, { quote: 'educação é', line: 1 })).toBe(true);
+    expect(validEvidence(text, { quote: 'educação é', line: 2 })).toBe(false);
+    expect(validEvidence(text, { quote: 'educacao é', line: 1 })).toBe(false);
+    expect(validEvidence(text, { quote: ' ', line: 1 })).toBe(false);
+  });
   it('gera SHA-256 estável e sensível a mudanças de contexto', async () => {
     const a = await sha256('texto+orientação');
     expect(a).toHaveLength(64);

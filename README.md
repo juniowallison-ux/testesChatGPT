@@ -88,11 +88,11 @@ O texto original do OCR e o texto revisado são guardados separadamente. O banco
 ## Validação e manutenção
 
 ```bash
-npm test                # 26 testes: regras, mensagens de falha e chamada de avaliação
+npm test                # 27 testes: regras, mensagens de falha e chamada de avaliação
 npm run typecheck       # TypeScript do frontend
 npm run build           # Build de produção
 npm run check:edge      # TypeScript das duas Edge Functions (Deno)
-npm run test:edge       # 20 testes: validador e integração OpenAI simulada, sem custo de API
+npm run test:edge       # 36 testes: validação, reparo e OpenAI simulada, sem custo de API
 npm run test:e2e        # Fluxos no Chromium: gestão, correção, dúvida e exportações
 npm run test:db         # PostgreSQL 17 em Docker, migração + isolamento/RLS
 ```
@@ -145,3 +145,20 @@ Para atualizar um site publicado manualmente, baixe novamente o ZIP da branch `c
 Use **Atualizar resultado** para consultar a correção salva sem repetir uma chamada à IA. Se ainda não houver avaliação, confira o erro antes de tentar novamente. Falhas de crédito/faturamento da OpenAI, sessão, configuração da função e conexão exigem ações diferentes. Os registros `booted` e `shutdown` do Supabase, isoladamente, não identificam a causa: confira o POST na aba **Invocations**, incluindo o código HTTP, e a mensagem mostrada no site.
 
 Os testes de navegador incluem falha HTTP 429 com aviso persistente, espera sem cliques repetidos, recuperação de resultado já salvo e nova tentativa bem-sucedida. Esses cenários usam um Supabase fictício interceptado pelo Playwright, sem chamadas à OpenAI ou ao projeto real. A correção autenticada no projeto do usuário ainda depende de diagnóstico e validação.
+
+## Falha de validação da devolutiva (HTTP 502)
+
+Foi observado no projeto hospedado o erro “A devolutiva não passou pela validação de formato, evidências ou privacidade”. Essa mensagem antiga não distingue qual regra falhou; também podia esconder falhas de conexão com o provedor.
+
+A função atualizada usa a mesma régua do texto numerado para verificar evidências, tolerando apenas diferenças de espaços. Quando o trecho literal identifica uma única linha, o servidor corrige o número da linha. Trechos inexistentes, ambíguos ou que cruzam linhas continuam sendo rejeitados. Elementos C5 recuperam o trecho original, sem corrigir palavras ou pontuação. Referências a linhas e instruções privadas são verificadas nos comentários gerados; números e expressões escritos pelo aluno nas citações não são tratados como instruções da professora.
+
+Uma resposta inválida permite apenas uma chamada adicional de reparo, sujeita à mesma validação e ao orçamento diário. Cada chamada à OpenAI pode ter custo e tem espera máxima de 45 segundos. Erros de API, crédito, conexão e orçamento não repetem chamadas automaticamente. Só uma devolutiva validada chega ao cache e à persistência. O hash usa a versão **enem-openai-v3**. Os logs de validação contêm somente evento, categoria e número da tentativa, sem textos ou contexto privado. Se o reparo falhar, a mensagem apresenta a categoria: format, competencies, evidence, intervention, line_reference ou privacy.
+
+Para aplicar pelo editor do Supabase:
+
+1. Execute **node scripts/prepare-edge.mjs** para gerar os arquivos completos (a branch de entrega já os inclui).
+2. Copie **todo** o conteúdo de **supabase/dashboard/evaluate-student-essay/index.js**.
+3. Abra **Supabase → Edge Functions → evaluate-student-essay → Code**, substitua o conteúdo de **index.ts** pelo arquivo completo e publique com **Deploy updates**. A função valida a sessão internamente; mantenha a configuração de gateway já usada na publicação.
+4. No site, abra uma redação pendente já salva e clique em **Avaliar com IA**. Confira nota, status **Corrigida**, competências e persistência após atualizar a página.
+
+Esta alteração pode ser aplicada atualizando somente a função de correção. Não exige alteração de tabelas nem nova chave. Os 36 testes das funções usam chamadas simuladas; o teste real com a conta do usuário depende dessa publicação. O log de falha observado não fornece a resposta original da OpenAI, portanto não permite identificar qual regra específica falhou naquela tentativa.

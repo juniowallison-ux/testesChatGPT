@@ -113,7 +113,13 @@ function parseJsonResponse(raw) {
   }
 }
 function validEvidence(text, evidence) {
-  return evidence.quote.trim().length > 0 && text.includes(evidence.quote) && Number.isInteger(evidence.line) && Boolean(wrapEssay(text)[evidence.line - 1]?.includes(evidence.quote));
+  const quote = evidence.quote.trim().replace(/\s+/g, " ");
+  return quote.length > 0 && Number.isInteger(evidence.line) && Boolean(wrapEssay(text)[evidence.line - 1]?.includes(quote));
+}
+function literalQuote(text, quote) {
+  if (!quote.trim()) return null;
+  const pattern = quote.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+  return new RegExp(pattern).exec(text)?.[0] ?? null;
 }
 
 // supabase/functions/_shared/ai.ts
@@ -144,26 +150,35 @@ async function openai(system, parts, schema, options = {}) {
   const key = Deno.env.get("OPENAI_API_KEY");
   if (!key) throw new HttpError(503, "Configure OPENAI_API_KEY nos segredos do Supabase.");
   const model = openAIModel();
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    signal: AbortSignal.timeout(1e5),
-    body: JSON.stringify({
-      model,
-      store: false,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: toOpenAIContent(parts) }
-      ],
-      temperature: 0.1,
-      ...options.seed === void 0 ? {} : { seed: options.seed },
-      max_completion_tokens: 12e3,
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: options.schemaName || "enem_evaluation", strict: true, schema }
-      }
-    })
-  });
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(options.timeoutMs ?? 1e5),
+      body: JSON.stringify({
+        model,
+        store: false,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: toOpenAIContent(parts) }
+        ],
+        temperature: 0.1,
+        ...options.seed === void 0 ? {} : { seed: options.seed },
+        max_completion_tokens: 12e3,
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: options.schemaName || "enem_evaluation", strict: true, schema }
+        }
+      })
+    });
+  } catch (error) {
+    const timeout = error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name);
+    throw new HttpError(
+      timeout ? 504 : 502,
+      timeout ? "A OpenAI n\xE3o respondeu no tempo esperado. Consulte o resultado salvo antes de tentar novamente." : "N\xE3o foi poss\xEDvel conectar \xE0 OpenAI. Tente novamente mais tarde."
+    );
+  }
   if (!response.ok) {
     const message = response.status === 401 ? "A OpenAI recusou a chave. Verifique OPENAI_API_KEY nos segredos do Supabase." : response.status === 429 ? "A API da OpenAI atingiu o limite ou est\xE1 sem cr\xE9ditos. Verifique o faturamento da API." : response.status === 400 || response.status === 404 ? "A OpenAI recusou a configura\xE7\xE3o. Verifique o modelo e o acesso da chave no painel da API." : "A OpenAI n\xE3o conseguiu concluir a solicita\xE7\xE3o. Tente novamente mais tarde.";
     throw new HttpError(response.status === 429 ? 429 : 502, message);
@@ -185,6 +200,13 @@ async function openai(system, parts, schema, options = {}) {
 
 // supabase/functions/_shared/evaluation.ts
 import { z } from "npm:zod@3.24.2";
+var EvaluationValidationError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "EvaluationValidationError";
+  }
+};
 var comment = z.string().min(1).max(6e3);
 var evaluationSchema = z.object({
   competencies: z.array(
@@ -269,29 +291,75 @@ var responseSchema = {
   ]
 };
 function normalizeEvaluation(raw, text, privateNames = []) {
-  const value = evaluationSchema.parse(raw);
+  const parsed = evaluationSchema.safeParse(raw);
+  if (!parsed.success)
+    throw new EvaluationValidationError(
+      "format",
+      "A resposta n\xE3o cont\xE9m todos os campos no formato esperado."
+    );
+  const value = parsed.data;
+  const lines = wrapEssay(text);
   if (new Set(value.competencies.map((c) => c.number)).size !== 5)
-    throw new Error("Compet\xEAncias incompletas.");
-  if (value.evidence.some((e) => !validEvidence(text, e)))
-    throw new Error("Evid\xEAncia ou linha n\xE3o encontrada no texto.");
-  for (const quote of Object.values(value.intervention)) {
-    if (quote !== null && (!quote.trim() || !text.includes(quote)))
-      throw new Error("Elemento de interven\xE7\xE3o sem evid\xEAncia literal.");
+    throw new EvaluationValidationError(
+      "competencies",
+      "A resposta repetiu ou omitiu uma compet\xEAncia."
+    );
+  for (const evidence of value.evidence) {
+    evidence.quote = evidence.quote.trim().replace(/\s+/g, " ");
+    if (!evidence.quote)
+      throw new EvaluationValidationError("evidence", "A IA retornou uma cita\xE7\xE3o vazia.");
+    if (!validEvidence(text, evidence)) {
+      const matches = lines.flatMap((line, i) => line.includes(evidence.quote) ? [i + 1] : []);
+      if (matches.length !== 1)
+        throw new EvaluationValidationError(
+          "evidence",
+          "A IA citou um trecho que n\xE3o p\xF4de ser confirmado em uma \xFAnica linha da reda\xE7\xE3o."
+        );
+      evidence.line = matches[0];
+    }
+  }
+  for (const key of Object.keys(value.intervention)) {
+    const quote = value.intervention[key];
+    if (quote !== null) {
+      const original = literalQuote(text, quote);
+      if (original === null)
+        throw new EvaluationValidationError(
+          "intervention",
+          "A IA indicou um elemento da interven\xE7\xE3o sem trecho literal na reda\xE7\xE3o."
+        );
+      value.intervention[key] = original;
+    }
   }
   const serialized = JSON.stringify(value);
-  for (const match of serialized.matchAll(/(?:\bL|linha\s+)(\d+)/gi)) {
-    if (Number(match[1]) < 1 || Number(match[1]) > wrapEssay(text).length)
-      throw new Error("Refer\xEAncia a linha inexistente.");
+  const comments = [
+    ...value.competencies.map((c) => c.comment),
+    value.general_feedback,
+    ...value.strengths,
+    ...value.improvements,
+    ...value.evidence.map((e) => e.comment),
+    value.zero_reason || ""
+  ];
+  for (const comment2 of comments) {
+    for (const match of comment2.matchAll(/(?:\bL|\blinha\s+)(\d+)\b/gi)) {
+      if (Number(match[1]) < 1 || Number(match[1]) > lines.length)
+        throw new EvaluationValidationError(
+          "line_reference",
+          "A devolutiva menciona uma linha que n\xE3o existe na reda\xE7\xE3o."
+        );
+    }
   }
   const privateTerms = privateNames.filter(
     (n) => n.length >= 4 && !text.toLocaleLowerCase().includes(n.toLocaleLowerCase())
   );
   if (privateTerms.some((n) => serialized.toLocaleLowerCase().includes(n.toLocaleLowerCase())))
-    throw new Error("A resposta menciona contexto privado.");
+    throw new EvaluationValidationError(
+      "privacy",
+      "A devolutiva menciona contexto privado da professora."
+    );
   if (/orientaç(?:ão|ões)\s+(?:interna|da professora)|documentos? de apoio|prompt do sistema|campo_nome/i.test(
-    serialized
+    comments.join("\n")
   ))
-    throw new Error("A resposta menciona instru\xE7\xF5es internas.");
+    throw new EvaluationValidationError("privacy", "A devolutiva menciona instru\xE7\xF5es internas.");
   const result = {
     general_feedback: value.general_feedback,
     strengths: value.strengths,
@@ -314,10 +382,52 @@ C2: 200 tema desenvolvido com argumenta\xE7\xE3o consistente, repert\xF3rio soci
 C3: 200 informa\xE7\xF5es, fatos e opini\xF5es relacionados ao tema, organizados e consistentes, configurando autoria; 160 organiza\xE7\xE3o com ind\xEDcios de autoria; 120 organiza\xE7\xE3o limitada ou pouco desenvolvida, em defesa de um ponto de vista; 80 informa\xE7\xF5es desorganizadas ou contradit\xF3rias, limitadas e com defesa fr\xE1gil; 40 informa\xE7\xF5es pouco relacionadas ou incoerentes, sem defesa consistente; 0 informa\xE7\xF5es n\xE3o relacionadas e aus\xEAncia de defesa de ponto de vista.
 C4: 200 boa articula\xE7\xE3o das partes e repert\xF3rio diversificado de recursos coesivos; 160 articula\xE7\xE3o com poucas inadequa\xE7\xF5es e recursos diversificados; 120 articula\xE7\xE3o mediana com inadequa\xE7\xF5es e pouca diversidade; 80 articula\xE7\xE3o insuficiente com muitas inadequa\xE7\xF5es e recursos limitados; 40 articula\xE7\xE3o prec\xE1ria; 0 aus\xEAncia de articula\xE7\xE3o.
 C5: 200 proposta muito bem elaborada, detalhada, relacionada ao tema e articulada \xE0 discuss\xE3o; 160 proposta bem elaborada, relacionada e articulada; 120 elabora\xE7\xE3o mediana, relacionada e articulada; 80 elabora\xE7\xE3o insuficiente ou n\xE3o articulada \xE0 discuss\xE3o; 40 proposta vaga, prec\xE1ria ou relacionada apenas ao assunto; 0 aus\xEAncia de proposta, proposta sem rela\xE7\xE3o com tema/assunto ou desrespeito aos direitos humanos. Os cinco elementos ajudam a justificar o n\xEDvel, mas devem ter conex\xE3o e elabora\xE7\xE3o, n\xE3o apenas presen\xE7a nominal.
-EVID\xCANCIAS: Toda indica\xE7\xE3o de desvio deve ser apoiada por uma entrada em evidence com quote LITERAL e CONT\xCDGUA em uma \xFAnica linha fornecida, line existente e competency. Nunca invente trechos, erros ou n\xFAmeros de linha. N\xE3o cite trechos na devolutiva fora de evidence. O texto numerado usa r\xE9gua de 80 caracteres e N\xC3O representa linhas f\xEDsicas manuscritas; n\xE3o use essa contagem para anular textos por n\xFAmero de linhas. Se as informa\xE7\xF5es forem insuficientes, diga isso e pe\xE7a revis\xE3o da professora.
+EVID\xCANCIAS: Toda indica\xE7\xE3o de desvio deve ser apoiada por uma entrada em evidence com quote LITERAL e CONT\xCDGUA em uma \xFAnica linha fornecida, line existente e competency. Copie os caracteres do trecho exatamente, sem corrigir ortografia, pontua\xE7\xE3o ou acentua\xE7\xE3o. Use trechos curtos, sem atravessar linhas; line \xE9 o n\xFAmero L fornecido, sem recontar. N\xE3o acrescente aspas ou retic\xEAncias ao trecho. Nunca invente trechos, erros ou n\xFAmeros de linha. N\xE3o cite trechos nem n\xFAmeros de linha nos coment\xE1rios: use os campos quote e line em evidence. O texto numerado usa r\xE9gua de 80 caracteres e N\xC3O representa linhas f\xEDsicas manuscritas; n\xE3o use essa contagem para anular textos por n\xFAmero de linhas. Se as informa\xE7\xF5es forem insuficientes, diga isso e pe\xE7a revis\xE3o da professora.
 C5: intervention deve conter agente, acao, meio, efeito e detalhamento como trechos literais do texto, ou null quando ausentes. N\xE3o atribua elementos impl\xEDcitos sem evid\xEAncia. A interven\xE7\xE3o deve respeitar os direitos humanos. Uma viola\xE7\xE3o deve ser tratada conforme a matriz vigente, sem inventar regra de anula\xE7\xE3o.
 ANULA\xC7\xC3O: zero_reason \xE9 null salvo crit\xE9rio oficial aplic\xE1vel e demonstrado. Quando houver anula\xE7\xE3o justificada, todas as notas s\xE3o zero. N\xE3o exija t\xEDtulo. A abordagem parcial do tema e desvios de compet\xEAncia n\xE3o s\xE3o automaticamente anula\xE7\xE3o total.
 Retorne o JSON solicitado, com exatamente cinco compet\xEAncias numeradas de 1 a 5, justificativas, evid\xEAncias, pontos fortes e pr\xF3ximos passos. Nenhum dado t\xE9cnico privado deve aparecer no JSON.`;
+
+// supabase/functions/_shared/evaluate-with-repair.ts
+async function evaluateWithRepair(input, generate = (prompt, seed) => openai(systemPrompt, [{ text: prompt }], responseSchema, {
+  seed,
+  schemaName: "enem_evaluation",
+  timeoutMs: 45e3
+})) {
+  let prompt = input.prompt;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await input.beforeAttempt();
+    let raw;
+    try {
+      raw = await generate(prompt, (input.seed + attempt) % 2147483647);
+      return normalizeEvaluation(raw, input.text, input.privateNames);
+    } catch (error) {
+      const validation = error instanceof SyntaxError ? new EvaluationValidationError("format", "A resposta n\xE3o cont\xE9m um JSON v\xE1lido.") : error;
+      if (!(validation instanceof EvaluationValidationError)) throw error;
+      console.warn(
+        JSON.stringify({
+          event: "evaluation_validation_failed",
+          code: validation.code,
+          attempt: attempt + 1
+        })
+      );
+      if (attempt === 1)
+        throw new HttpError(
+          502,
+          "A devolutiva n\xE3o passou pela valida\xE7\xE3o ap\xF3s uma tentativa de reparo. " + validation.message + " Nenhuma nota foi salva. C\xF3digo: " + validation.code + "."
+        );
+      prompt = JSON.stringify({
+        request: input.prompt,
+        repair: {
+          instruction: "Reavalie e retorne o JSON completo. Corrija a falha indicada, preservando a matriz ENEM. Copie as evid\xEAncias exatamente das linhas fornecidas, use trechos curtos e n\xE3o exponha contexto privado. N\xE3o invente evid\xEAncias para satisfazer o formato.",
+          code: validation.code,
+          reason: validation.message,
+          previous_response: raw ?? null
+        }
+      });
+    }
+  }
+  throw new Error("Avalia\xE7\xE3o n\xE3o conclu\xEDda.");
+}
 
 // supabase/functions/evaluate-student-essay/index.ts
 Deno.serve(async (req) => {
@@ -360,7 +470,7 @@ Deno.serve(async (req) => {
     const guidance = results[1].data;
     const docs = results[2].data;
     const config = {
-      version: "enem-openai-v2",
+      version: "enem-openai-v3",
       provider: "openai",
       model: openAIModel(),
       text: s.reviewed_text,
@@ -381,7 +491,6 @@ Deno.serve(async (req) => {
     checkDb(cacheError);
     let evaluation = cached?.result;
     if (!evaluation) {
-      await budget(admin, user.id);
       const privateNames = [
         ...docs.map((d) => d.title),
         ...guidance.filter((g) => g.campo_nome.includes("_")).map((g) => g.campo_nome)
@@ -397,22 +506,13 @@ Deno.serve(async (req) => {
         previous: refinement ? existing : void 0,
         refinement: refinement || void 0
       });
-      try {
-        evaluation = normalizeEvaluation(
-          await openai(systemPrompt, [{ text: prompt }], responseSchema, {
-            seed: parseInt(hash.slice(0, 8), 16) % 2147483647,
-            schemaName: "enem_evaluation"
-          }),
-          s.reviewed_text,
-          privateNames
-        );
-      } catch (error3) {
-        if (error3 instanceof HttpError) throw error3;
-        throw new HttpError(
-          502,
-          "A devolutiva n\xE3o passou pela valida\xE7\xE3o de formato, evid\xEAncias ou privacidade. Nenhuma nota foi salva; tente novamente ou use a corre\xE7\xE3o manual."
-        );
-      }
+      evaluation = await evaluateWithRepair({
+        prompt,
+        text: s.reviewed_text,
+        privateNames,
+        seed: parseInt(hash.slice(0, 8), 16) % 2147483647,
+        beforeAttempt: () => budget(admin, user.id)
+      });
       const { error: error2 } = await admin.from("evaluation_cache").upsert({ hash, result: evaluation }, { onConflict: "hash", ignoreDuplicates: true });
       checkDb(error2);
     }

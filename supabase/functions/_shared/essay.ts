@@ -50,12 +50,22 @@ export function parseJsonResponse(raw: string): unknown {
   }
 }
 export function validEvidence(text: string, evidence: { quote: string; line: number }): boolean {
+  const quote = evidence.quote.trim().replace(/\s+/g, ' ');
   return (
-    evidence.quote.trim().length > 0 &&
-    text.includes(evidence.quote) &&
+    quote.length > 0 &&
     Number.isInteger(evidence.line) &&
-    Boolean(wrapEssay(text)[evidence.line - 1]?.includes(evidence.quote))
+    Boolean(wrapEssay(text)[evidence.line - 1]?.includes(quote))
   );
+}
+/** Recupera a grafia original; tolera somente diferenças de espaço/quebra de linha. */
+export function literalQuote(text: string, quote: string): string | null {
+  if (!quote.trim()) return null;
+  const pattern = quote
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s+');
+  return new RegExp(pattern).exec(text)?.[0] ?? null;
 }
 export function rtfEscape(text: string): string {
   return [...text]

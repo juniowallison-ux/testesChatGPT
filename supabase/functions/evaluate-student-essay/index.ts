@@ -8,8 +8,8 @@ import {
   HttpError,
   budget,
 } from '../_shared/http.ts';
-import { openai, openAIModel } from '../_shared/ai.ts';
-import { normalizeEvaluation, responseSchema, systemPrompt } from '../_shared/evaluation.ts';
+import { openAIModel } from '../_shared/ai.ts';
+import { evaluateWithRepair } from '../_shared/evaluate-with-repair.ts';
 import { sha256, wrapEssay } from '../_shared/essay.ts';
 Deno.serve(async (req: Request) => {
   const early = preflight(req);
@@ -69,7 +69,7 @@ Deno.serve(async (req: Request) => {
     const guidance = results[1].data;
     const docs = results[2].data;
     const config = {
-      version: 'enem-openai-v2',
+      version: 'enem-openai-v3',
       provider: 'openai',
       model: openAIModel(),
       text: s.reviewed_text,
@@ -94,7 +94,6 @@ Deno.serve(async (req: Request) => {
     checkDb(cacheError);
     let evaluation = cached?.result;
     if (!evaluation) {
-      await budget(admin, user.id);
       const privateNames = [
         ...docs!.map((d: { title: string }) => d.title),
         ...guidance!
@@ -114,22 +113,13 @@ Deno.serve(async (req: Request) => {
         previous: refinement ? existing : undefined,
         refinement: refinement || undefined,
       });
-      try {
-        evaluation = normalizeEvaluation(
-          await openai(systemPrompt, [{ text: prompt }], responseSchema, {
-            seed: parseInt(hash.slice(0, 8), 16) % 2147483647,
-            schemaName: 'enem_evaluation',
-          }),
-          s.reviewed_text,
-          privateNames,
-        );
-      } catch (error) {
-        if (error instanceof HttpError) throw error;
-        throw new HttpError(
-          502,
-          'A devolutiva não passou pela validação de formato, evidências ou privacidade. Nenhuma nota foi salva; tente novamente ou use a correção manual.',
-        );
-      }
+      evaluation = await evaluateWithRepair({
+        prompt,
+        text: s.reviewed_text,
+        privateNames,
+        seed: parseInt(hash.slice(0, 8), 16) % 2147483647,
+        beforeAttempt: () => budget(admin, user.id),
+      });
       const { error } = await admin
         .from('evaluation_cache')
         .upsert({ hash, result: evaluation }, { onConflict: 'hash', ignoreDuplicates: true });
